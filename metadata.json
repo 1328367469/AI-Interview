@@ -1,0 +1,9 @@
+{
+  "name": "Remix: AI 面试神器 Prototype",
+  "description": "具有科技感的全真模拟面试与职业规划工具原型，包含沉浸式对讲、雷达评分图及动态界面设计。",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ],
+  "majorCapabilities": []
+}
