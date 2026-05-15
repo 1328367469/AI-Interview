@@ -54,7 +54,7 @@ export default function ProfileView() {
         
         <div className="space-y-3">
            <ListRow icon={<History className="text-blue-400" size={20} />} title="历史面试归档" desc="回溯过去的心电/语音/打分数据" onClick={() => navigate('report')} />
-           <ListRow icon={<FileCode className="text-emerald-400" size={20} />} title="结构化简历库" desc="管理同步至云端的多版本简历" />
+           <ListRow icon={<FileCode className="text-emerald-400" size={20} />} title="结构化简历库" desc="管理同步至云端的多版本简历" onClick={() => navigate('resume-library')} />
            <ListRow icon={<Bookmark className="text-amber-400" size={20} />} title="全网收藏节点" desc="猎头与直招岗位的观测点" />
         </div>
       </div>

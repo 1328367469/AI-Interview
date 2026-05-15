@@ -10,7 +10,10 @@ export type ViewState =
   | 'resume-opt'
   | 'career-plan'
   | 'jd-match'
-  | 'question-bank';
+  | 'question-bank'
+  | 'questions'
+  | 'resume-parser'
+  | 'resume-library';
 
 export interface AppContextType {
   currentView: ViewState;

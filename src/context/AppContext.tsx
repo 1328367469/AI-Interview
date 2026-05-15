@@ -19,6 +19,20 @@ interface AppContextValue {
   dbStatus: 'checking' | 'connected' | 'error';
   fetchData: () => Promise<void>;
   isRefreshing: boolean;
+  interviewResult: any;
+  setInterviewResult: React.Dispatch<React.SetStateAction<any>>;
+  parsedResumeResult: any;
+  setParsedResumeResult: React.Dispatch<React.SetStateAction<any>>;
+  parsedResumeFile: File | null;
+  setParsedResumeFile: React.Dispatch<React.SetStateAction<File | null>>;
+  isParsingResume: boolean;
+  setIsParsingResume: React.Dispatch<React.SetStateAction<boolean>>;
+  resumeParsingStep: number;
+  setResumeParsingStep: React.Dispatch<React.SetStateAction<number>>;
+  parseErrorMsg: string | null;
+  setParseErrorMsg: React.Dispatch<React.SetStateAction<string | null>>;
+  interviewSession: any;
+  setInterviewSession: React.Dispatch<React.SetStateAction<any>>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -41,10 +55,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
+  const [parsedResumeResult, setParsedResumeResult] = useState<any>(null);
+  const [parsedResumeFile, setParsedResumeFile] = useState<File | null>(null);
+  const [isParsingResume, setIsParsingResume] = useState(false);
+  const [resumeParsingStep, setResumeParsingStep] = useState(0);
+  const [parseErrorMsg, setParseErrorMsg] = useState<string | null>(null);
 
   const [interviewResult, setInterviewResult] = useState<any>(null);
+  const [interviewSession, setInterviewSession] = useState<any>(null);
 
-  const userId = 'user_123'; // Mock user ID for now
+  const userId = 'user_123';
 
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
@@ -72,7 +92,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           content: h.content,
           isActionable: false,
         }));
-        // Merge without losing actionability on welcome message
         setMessages([
           {
             id: 'welcome_1',
@@ -101,7 +120,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const completeOnboarding = () => {
     localStorage.setItem('nexus_onboarding_seen', 'true');
-    setCurrentView('home');
+    navigate('home');
   };
 
   return (
@@ -117,7 +136,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       fetchData,
       isRefreshing,
       interviewResult,
-      setInterviewResult
+      setInterviewResult,
+      parsedResumeResult,
+      setParsedResumeResult,
+      parsedResumeFile,
+      setParsedResumeFile,
+      isParsingResume,
+      setIsParsingResume,
+      resumeParsingStep,
+      setResumeParsingStep,
+      parseErrorMsg,
+      setParseErrorMsg,
+      interviewSession,
+      setInterviewSession
     } as any}>
       {children}
     </AppContext.Provider>

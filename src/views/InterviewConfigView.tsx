@@ -3,9 +3,10 @@ import { ArrowLeft, Play, Briefcase, Search, ChevronRight, X } from 'lucide-reac
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppContext } from '../context/AppContext';
 import { cn } from '../lib/utils';
+import axios from 'axios';
 
 export default function InterviewConfigView() {
-  const { navigate } = useAppContext();
+  const { navigate, setInterviewSession, parsedResumeResult } = useAppContext() as any;
   
   const [type, setType] = useState('depth');
   const [duration, setDuration] = useState('30');
@@ -13,12 +14,35 @@ export default function InterviewConfigView() {
   const [showJobModal, setShowJobModal] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (isStarting) return;
     setIsStarting(true);
-    setTimeout(() => {
-      navigate('active-interview');
-    }, 1000);
+    try {
+        const resumeText = parsedResumeResult ? parsedResumeResult.sourceText : "";
+        const res = await axios.post('/api/generate-interview', {
+            targetRole,
+            resumeText,
+            duration
+        });
+        setInterviewSession({
+            opening: res.data.opening,
+            questions: res.data.questions,
+            records: []
+        });
+        navigate('active-interview');
+    } catch (e) {
+        console.error("Failed to generate interview", e);
+        setIsStarting(false);
+        // fallback
+        setInterviewSession({
+           opening: "您好，我是系统虚拟面试官。很高兴今天与您交流。准备好的话，请做一个简单的自我介绍。",
+           questions: [
+             { id: 1, question: "请做一个简单的自我介绍吧。", spokenText: "请做一个简单的自我介绍吧。", expectedKeywords: ["经历", "技术"], knowledgePoint: "背景" }
+           ],
+           records: []
+        });
+        navigate('active-interview');
+    }
   };
 
   return (
@@ -97,7 +121,7 @@ export default function InterviewConfigView() {
         >
           {!isStarting && <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.2)_50%,transparent_75%)] bg-[length:250%_250%,100%_100%] group-hover:animate-[shimmer_1.5s_infinite]"></div>}
           <Play size={18} fill="currentColor" className={isStarting ? "animate-bounce" : ""} />
-          <span className="tracking-wider">{isStarting ? "INITIALIZING..." : "START_SIMULATION / 开始模拟"}</span>
+          <span className="tracking-wider">{isStarting ? "生成面试框架中..." : "START_SIMULATION / 开始模拟"}</span>
         </motion.button>
       </div>
 

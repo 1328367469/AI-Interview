@@ -65,7 +65,7 @@ const tools = [
         title: '面试知识库 / 文档',
         desc: '核心概念、模拟流程与岗位考点查阅',
         color: 'rose',
-        route: 'question-bank'
+        route: 'questions'
       }
     ]
   },
@@ -77,7 +77,7 @@ const tools = [
         title: 'ATS 简历透视扫描',
         desc: '底层结构分析，查找匹配度缺陷边界',
         color: 'cyan',
-        route: 'resume-opt',
+        route: 'resume-parser',
         badge: true
       },
       {
@@ -85,7 +85,7 @@ const tools = [
         title: 'STAR 架构重写',
         desc: '生成高通过率的结构化项目经历',
         color: 'emerald',
-        route: 'resume-opt'
+        route: 'resume-parser'
       }
     ]
   },

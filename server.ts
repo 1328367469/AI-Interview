@@ -1,15 +1,25 @@
-import express from "express";
+import express, { Request } from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
 import dotenv from "dotenv";
 import axios from "axios";
+import multer from "multer";
+import mammoth from "mammoth";
+import fs from "fs";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const pdf = require("pdf-parse");
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Configure multer for file uploads
+const upload = multer({ dest: '/tmp/' });
 
 async function startServer() {
   const app = express();
@@ -175,7 +185,144 @@ async function startServer() {
 
   await initDb();
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use((req, res, next) => {
+    console.log(`[REQ] ${req.method} ${req.url}`);
+    next();
+  });
+
+    const processResumeText = async (resumeText: string) => {
+      const lines = resumeText.split('\n').map((l: any) => l.trim()).filter((l: any) => l.length > 0);
+      const documentLines = lines.map((text: any, idx: number) => ({
+        id: "line_" + idx,
+        type: 'content',
+        text,
+        highlight: null as string | null
+      }));
+
+      // 3. AI Analysis
+      const deepseekKey = process.env.SILICONFLOW_API_KEY || process.env.DEEPSEEK_API_KEY;
+      
+      const prompt = "你是一位严苛的大厂ATS（Applicant Tracking System）解析引擎兼高级猎头专家。\n请深度诊断以下候选人简历的文本行（带行号）。不仅要总评，还要挑出几行确实描述不够硬核、缺乏STAR法则、口语化的句子，给出修改建议。\n\n简历原文行：\n" + documentLines.map((l: any, i: number) => "[" + i + "] " + l.text).join('\n') + "\n\n【输出JSON结构要求】：\n{\n  \"atsMetrics\": { \"totalScore\": 85, \"keywordMatch\": 80, \"starCompliance\": 60, \"readability\": 90 },\n  \"atsBasis\": { \"coreLogic\": \"简述你作为ATS的打分依据...\", \"issueSummary\": \"一句话致命伤总结...\" },\n  \"issues\": [\n    {\n      \"lineIndex\": 12,\n      \"severity\": \"risk\",\n      \"reason\": \"流水账式描述，未体现业务营收和个人价值。\",\n      \"suggested\": \"重写后的、符合STAR法则的高级话术。\"\n    }\n  ]\n}\n\n要求：必须返回合法的 JSON 对象。";
+
+      let content = "";
+      if (deepseekKey) {
+        const apiUrl = process.env.SILICONFLOW_API_KEY 
+          ? (process.env.SILICONFLOW_API_URL || "https://api.siliconflow.cn/v1") 
+          : (process.env.DEEPSEEK_API_URL || "https://api.deepseek.com/v1");
+        const modelName = process.env.SILICONFLOW_API_KEY ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
+      
+        const aiResponse = await axios.post(apiUrl + "/chat/completions", {
+          model: modelName,
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" }
+        }, {
+          headers: { "Authorization": "Bearer " + deepseekKey, "Content-Type": "application/json" }
+        });
+        content = aiResponse.data.choices[0].message.content;
+      } else {
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+        });
+        content = response.text() || "{}";
+      }
+
+      if (content.includes("```json")) {
+        content = content.split("```json")[1].split("```")[0].trim();
+      } else if (content.includes("```")) {
+        content = content.split("```")[1].split("```")[0].trim();
+      }
+      
+      let parsedData: any = {};
+      try {
+         parsedData = JSON.parse(content);
+      } catch (err: any) {
+         console.error("Failed to parse AI output:", content.substring(0, 500));
+         throw new Error("AI 返回了无效的数据格式，请重试。(AI Output: " + err.message + ")");
+      }
+      
+      const diagnostics: any = {};
+      
+      if (parsedData.issues && Array.isArray(parsedData.issues)) {
+          parsedData.issues.forEach((issue: any) => {
+              const lineIdx = Number(issue.lineIndex);
+              if (!isNaN(lineIdx) && lineIdx >= 0 && lineIdx < documentLines.length) {
+                  const lineId = documentLines[lineIdx].id;
+                  documentLines[lineIdx].highlight = issue.severity;
+                  diagnostics[lineId] = {
+                      reason: issue.reason,
+                      suggested: issue.suggested,
+                      accepted: null
+                  };
+              }
+          });
+      }
+      
+      const finalResult = {
+        atsMetrics: parsedData.atsMetrics || { totalScore: 70, keywordMatch: 60, starCompliance: 50, readability: 70 },
+        atsBasis: parsedData.atsBasis || { coreLogic: "缺乏专业分析", issueSummary: "建议增加详细的STAR经历" },
+        documentLines,
+        diagnostics
+      };
+
+      return finalResult;
+  };
+
+  app.post('/api/parse-resume-json', express.json({limit: '50mb'}), async (req: any, res: any) => {
+    try {
+      const { filename, content: base64Content } = req.body;
+      let resumeText = '';
+      if (!base64Content) throw new Error("缺少文件内容");
+      
+      if (filename.toLowerCase().endsWith('.docx')) {
+        const dataBuffer = Buffer.from(base64Content, 'base64');
+        const result = await mammoth.extractRawText({ buffer: dataBuffer });
+        resumeText = result.value;
+      } else if (filename.toLowerCase().endsWith('.pdf')) {
+        const dataBuffer = Buffer.from(base64Content, 'base64');
+        const parser = new (pdf as any).PDFParse({ data: dataBuffer });
+        const textData = await parser.getText();
+        resumeText = textData.text;
+      } else {
+        const dataBuffer = Buffer.from(base64Content, 'base64');
+        resumeText = dataBuffer.toString('utf8');
+      }
+      const parsed = await processResumeText(resumeText);
+      res.json(parsed);
+    } catch (e: any) { 
+      res.status(500).json({error: "解析错误: " + e.message, fullError: e.message}); 
+    }
+  });
+
+  app.post("/api/parse-resume", upload.single('resume'), async (req: any, res: any) => {
+    try {
+      if (!req.file) { return res.status(400).json({ error: "No file uploaded" }); }
+      const dataBuffer = fs.readFileSync(req.file.path);
+      let resumeText = "";
+      const originalName = req.file.originalname.toLowerCase();
+      if (originalName.endsWith('.docx')) {
+        const result = await mammoth.extractRawText({ path: req.file.path });
+        resumeText = result.value;
+      } else if (originalName.endsWith('.pdf')) {
+        const parser = new (pdf as any).PDFParse({ data: dataBuffer });
+        const textData = await parser.getText();
+        resumeText = textData.text;
+      } else {
+        resumeText = dataBuffer.toString('utf8');
+      }
+      fs.unlinkSync(req.file.path);
+      const parsed = await processResumeText(resumeText);
+      res.json(parsed);
+    } catch (e: any) {
+      if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      res.status(500).json({error: "解析错误: " + e.message, fullError: e.message});
+    }
+  });
+
 
   // API to update config (like DeepSeek Key)
   app.post("/api/config", async (req, res) => {
@@ -584,15 +731,7 @@ AI: ${fullResponse}
   app.post("/api/career-plan", async (req, res) => {
     try {
       const { currentUserProfile } = req.body;
-      const apiKey = process.env.SILICONFLOW_API_KEY || process.env.DEEPSEEK_API_KEY;
-      const apiUrl = process.env.SILICONFLOW_API_KEY 
-        ? (process.env.SILICONFLOW_API_URL || "https://api.siliconflow.cn/v1") 
-        : (process.env.DEEPSEEK_API_URL || "https://api.deepseek.com/v1");
-      const modelName = process.env.SILICONFLOW_API_KEY ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
-
-      if (!apiKey) {
-        return res.status(500).json({ error: "DeepSeek/SiliconFlow API key not configured. Check .env" });
-      }
+      const deepseekKey = process.env.SILICONFLOW_API_KEY || process.env.DEEPSEEK_API_KEY;
 
       const systemInstruction = `你是一位深谙全球各行各业（涵盖互联网、金融、教育、医疗、传统制造、服务业等）职业发展与人力资源管理的“顶级职业规划架构师”。
 你的任务是：根据用户提供的【当前职业特征】（如职位、掌握的技能、学历背景、性格），推演出一条真实、可落地、极具参考价值的 3个阶段 的职业发展发展路径。
@@ -619,23 +758,51 @@ AI: ${fullResponse}
       const prompt = `分析下列用户画像并生成规划，严格输出以上定义的 JSON 格式:
 ${JSON.stringify({ currentUserProfile }, null, 2)}`;
 
-      const aiResponse = await axios.post(`${apiUrl}/chat/completions`, {
-        model: modelName,
-        messages: [
-          { role: "system", content: systemInstruction },
-          { role: "user", content: prompt }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.7
-      }, {
-        headers: {
-          "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        }
-      });
+      let resultText = "";
+      if (deepseekKey) {
+        const apiUrl = process.env.SILICONFLOW_API_KEY 
+          ? (process.env.SILICONFLOW_API_URL || "https://api.siliconflow.cn/v1") 
+          : (process.env.DEEPSEEK_API_URL || "https://api.deepseek.com/v1");
+        const modelName = process.env.SILICONFLOW_API_KEY ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
+      
+        const aiResponse = await axios.post(`${apiUrl}/chat/completions`, {
+          model: modelName,
+          messages: [
+            { role: "system", content: systemInstruction },
+            { role: "user", content: prompt }
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.7
+        }, {
+          headers: {
+            "Authorization": `Bearer ${deepseekKey}`,
+            "Content-Type": "application/json"
+          }
+        });
+        resultText = aiResponse.data.choices[0].message.content;
+      } else {
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                systemInstruction: systemInstruction,
+                responseMimeType: "application/json",
+                temperature: 0.7
+            }
+        });
+        resultText = response.text() || "{}";
+      }
 
-      const resultText = aiResponse.data.choices[0].message.content;
-      const resultObj = JSON.parse(resultText);
+      let content = resultText;
+      if (content.includes("```json")) {
+        content = content.split("```json")[1].split("```")[0].trim();
+      } else if (content.includes("```")) {
+        content = content.split("```")[1].split("```")[0].trim();
+      }
+
+      const resultObj = JSON.parse(content);
 
       res.json(resultObj);
     } catch (e: any) {
@@ -644,9 +811,91 @@ ${JSON.stringify({ currentUserProfile }, null, 2)}`;
     }
   });
 
+  app.post("/api/generate-interview", express.json({limit: '50mb'}), async (req: any, res: any) => {
+    try {
+      const { targetRole, resumeText, duration } = req.body;
+      const numQuestions = duration === '60' ? 8 : (duration === '45' ? 6 : 4);
+      
+      const prompt = `你是一位专业且经验丰富的技术面试官。
+候选人即将面试的岗位是【${targetRole}】，${resumeText ? "候选人的简历如下：\n" + resumeText.substring(0, 2000) : "目前没有候选人的简历。"}
+
+请你根据岗位要求和简历情况，生成一场时长约 ${duration} 分钟的面试大纲（大约需要提出 ${numQuestions} 个连贯的技术问题）。
+同时请你生成一句自然大方的开场白（例如：“好，我是您的技术面试官，您准备好我们可以随时开始。”不用太格式化，像真人对话一样自然）。
+
+随后列出你要问的 ${numQuestions} 个问题。对于每个问题，请同时预测出“优秀的回答应该包含哪些核心知识点/关键词”，供我稍后进行本地语义打分使用。
+
+请严格返回以下 JSON 格式的数据：
+{
+  "opening": "自然、亲切的开场白",
+  "questions": [
+    {
+      "id": 1,
+      "question": "面试官提出的问题内容，像口语化提问",
+      "spokenText": "同样是问题内容，如果有缩写请用读音写出",
+      "expectedKeywords": ["关键词1", "关键词2", "关键词3", "关键词4"],
+      "knowledgePoint": "这个题目考察的核心技术点简述"
+    }
+  ]
+}
+注意：返回的内容必须是合法的 JSON 对象，不包含任何 Markdown 格式或额外文本。`;
+
+      const deepseekKey = process.env.SILICONFLOW_API_KEY || process.env.DEEPSEEK_API_KEY;
+      let content = "";
+      if (deepseekKey) {
+        const apiUrl = process.env.SILICONFLOW_API_KEY 
+          ? (process.env.SILICONFLOW_API_URL || "https://api.siliconflow.cn/v1") 
+          : (process.env.DEEPSEEK_API_URL || "https://api.deepseek.com/v1");
+        const modelName = process.env.SILICONFLOW_API_KEY ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
+        const axios = require('axios');
+        const aiResponse = await axios.post(apiUrl + "/chat/completions", {
+          model: modelName,
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" }
+        }, {
+          headers: { "Authorization": "Bearer " + deepseekKey, "Content-Type": "application/json" }
+        });
+        content = aiResponse.data.choices[0].message.content;
+      } else {
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+        });
+        content = response.text() || "{}";
+      }
+
+      if (content.includes("```json")) {
+        content = content.split("```json")[1].split("```")[0].trim();
+      } else if (content.includes("```")) {
+        content = content.split("```")[1].split("```")[0].trim();
+      }
+
+      let parsedData: any = {};
+      try {
+        parsedData = JSON.parse(content);
+      } catch (err: any) {
+         console.error("Parse error:", err);
+         parsedData = {
+           opening: "您好，我是今天的面试官，准备好了我们就可以开始。",
+           questions: [
+             { id: 1, question: "请做一个简单的自我介绍吧。", spokenText: "请做一个简单的自我介绍吧。", expectedKeywords: ["项目经验", "技术栈", "个人亮点"], knowledgePoint: "表达与背景" },
+             { id: 2, question: "我看你遇到过一些性能瓶颈，能详细说说你是怎么排查和优化的吗？", spokenText: "我看你遇到过一些性能瓶颈，能详细说说你是怎么排查和优化的吗？", expectedKeywords: ["排查工具", "优化方案", "指标提升"], knowledgePoint: "性能优化" }
+           ]
+         };
+      }
+
+      res.json(parsedData);
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/generate-report", async (req, res) => {
     try {
-      const { userId = "user_123", interviewResult } = req.body;
+      const { userId = "user_123", interviewResult, interviewRecords } = req.body;
       const apiKey = process.env.SILICONFLOW_API_KEY || process.env.DEEPSEEK_API_KEY;
       const apiUrl = process.env.SILICONFLOW_API_KEY 
         ? (process.env.SILICONFLOW_API_URL || "https://api.siliconflow.cn/v1") 
@@ -657,36 +906,43 @@ ${JSON.stringify({ currentUserProfile }, null, 2)}`;
         return res.status(500).json({ error: "API key not configured" });
       }
 
-      const db = getPool();
       let chatRecords = "暂无实际对话数据。";
-      if (db) {
-        const [historyRows]: any = await db.query(
-          "SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY created_at ASC LIMIT 100", 
-          [userId]
-        );
-        if (historyRows && historyRows.length > 0) {
-          chatRecords = historyRows.map((r: any) => `${r.role}: ${r.content}`).join("\n");
+      if (interviewRecords && interviewRecords.length > 0) {
+        chatRecords = interviewRecords.map((r: any) => 
+          `问题: ${r.question}\n期望关键词: ${r.expectedKeywords?.join(', ')}\n考生回答: ${r.userAnswer}\n关键字命中率: ${r.matchRate ? (r.matchRate * 100).toFixed(0) : 0}%\n`
+        ).join("\n--------------------\n");
+      } else {
+        const db = getPool();
+        if (db) {
+          const [historyRows]: any = await db.query(
+            "SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY created_at ASC LIMIT 100", 
+            [userId]
+          );
+          if (historyRows && historyRows.length > 0) {
+            chatRecords = historyRows.map((r: any) => `${r.role}: ${r.content}`).join("\n");
+          }
         }
       }
 
-      const prompt = `你是一位毫不留情、极度严厉的顶级科技公司技术面试官兼心理学专家。一场面试刚刚结束，请你根据真实面试对话上下文和生物特征数据，生成一份结构化的JSON格式《面试诊断报告》。
+      const prompt = `你是一位毫不留情、极度严厉的顶级科技公司技术面试官兼心理学专家。一场面试刚刚结束，请根据以下真实的面试问答记录（包含期望命中的知识点、考生的回答以及词匹配率等）以及生物特征数据，生成一份结构化的JSON格式《面试诊断报告》。
 
 【核心原则】
-1. 极度犀利：绝对不要讨好候选人！直接撕开伪装，精准挑出沟通、技术深度、逻辑表达中的毛病。
-2. 毒舌且专业：如果回答很差，指出“极其肤浅”“背诵痕迹明显”“避重就轻”。如果很好，才给予符合事实的专业认可。
-3. 真实数据驱动：必须紧扣对话记录生成扣分点，不要凭空捏造。
+1. 极度犀利：直接撕开伪装，精准挑出回答中偏题、技术深度不够、逻辑表达中的毛病。
+2. 真实分析：对于考生的每道题回答，重点分析他说了什么内容，哪里不对或者不到位。不能捏造考生没说的话。
+3. 真实判断：给出明确的录用决策："Hire" (要), "No Hire" (不要), 或者 "Hold" (待定)，及一句话理由。
+4. 针对性专项训练：生成 2-3 道专项训练题及考察要点。
 
-【近期对话上下文】:
+【面试问答记录】:
 ${chatRecords}
 
 【生物特征数据采集】:
 压力指数：${interviewResult?.stress || 50}%
 自信度：${interviewResult?.confidence || 80}%
-持续时间：${interviewResult?.duration || 0}秒
 
 请输出JSON结构，严格按照以下字典字段：
 {
   "sysScore": 85,
+  "hireDecision": { "decision": "No Hire", "reason": "底层原理完全盲区，业务广度不够" },
   "title": "高级专家级分析报告",
   "metrics": {
     "depth": 85,
@@ -704,11 +960,21 @@ ${chatRecords}
     "integrityScore": 98,
     "details": [
        {"type": "positive", "label": "事实评价", "desc": "描述..."},
-       {"type": "warning", "label": "犀利指出不足", "desc": "在核心问题上躲躲闪闪..."}
+       {"type": "warning", "label": "犀利指出不足", "desc": "问题剖析..."}
     ]
-  }
+  },
+  "analysis": [
+    {
+       "question": "面试问题",
+       "userAnswer": "候选人的回答截图式归纳",
+       "critique": "对回答的尖锐剖析，指出哪里没答对或者漏了什么知识点"
+    }
+  ],
+  "targetedQuestions": [
+    { "question": "针对缺少经验的深度追问...", "focus": "主要考察对前端性能监控SDK源码级别的理解" }
+  ]
 }
-要求：紧扣实际对话内容，不要夸大也不要讨好。数据严厉、专业。`;
+要求：紧扣本场记录，严格返回JSON，不允许带markdown。`;
 
       const aiResponse = await axios.post(`${apiUrl}/chat/completions`, {
         model: modelName,
@@ -729,14 +995,101 @@ ${chatRecords}
     }
   });
 
+  app.post('/api/search-jd', express.json({limit: '50mb'}), async (req: any, res: any) => {
+    try {
+      const { region, jobType, resumeText } = req.body;
+      const prompt = `你是一位资深的猎头兼ATS，现在有一个候选人希望寻找【${region}】地区的【${jobType}】职位。
+${resumeText ? "根据以下候选人简历，推测3家目前在招对应岗位的大厂或知名公司：\n" + resumeText.substring(0, 2000) : "请生成3个该地区符合大厂标准的真实JD。"}
+
+请返回JSON，结构如下：
+{
+  "jobs": [
+    {
+      "title": "职位名称",
+      "company": "公司名称",
+      "location": "具体商圈或区",
+      "salary": "薪资范围，如 35-60K",
+      "match": 92,
+      "missing": "简历里欠缺的核心经验（一句话）",
+      "strategyData": {
+        "directHint": "内推或投递建议",
+        "jdTrap": "JD描述里的隐性门槛",
+        "hcReality": "真实HC情况测算",
+        "rounds": ["一面基础", "二面架构", "主管面"]
+      }
+    }
+  ]
+}
+必须返回合法的 JSON 对象。`;
+
+      const deepseekKey = process.env.SILICONFLOW_API_KEY || process.env.DEEPSEEK_API_KEY;
+      let content = "";
+      if (deepseekKey) {
+        const apiUrl = process.env.SILICONFLOW_API_KEY 
+          ? (process.env.SILICONFLOW_API_URL || "https://api.siliconflow.cn/v1") 
+          : (process.env.DEEPSEEK_API_URL || "https://api.deepseek.com/v1");
+        const modelName = process.env.SILICONFLOW_API_KEY ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
+        const axios = require('axios');
+        const aiResponse = await axios.post(apiUrl + "/chat/completions", {
+          model: modelName,
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" }
+        }, {
+          headers: { "Authorization": "Bearer " + deepseekKey, "Content-Type": "application/json" }
+        });
+        content = aiResponse.data.choices[0].message.content;
+      } else {
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+        });
+        content = response.text() || "{}";
+      }
+
+      if (content.includes("```json")) {
+        content = content.split("```json")[1].split("```")[0].trim();
+      } else if (content.includes("```")) {
+        content = content.split("```")[1].split("```")[0].trim();
+      }
+
+      let parsedData: any = {};
+      try {
+        parsedData = JSON.parse(content);
+      } catch (err: any) {
+         console.error("Parse error:", err);
+         parsedData = { jobs: [{
+             title: "高级前端架构", company: "示例大厂", location: region, salary: "40-70K", match: 85, missing: "全栈能力",
+             strategyData: { directHint: "建议内推", jdTrap: "要求造轮子", hcReality: "可能为池子", rounds: ["1面", "2面", "HR"] }
+         }] };
+      }
+
+      res.json(parsedData.jobs || []);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.use("/api", (err: any, req: any, res: any, next: any) => {
+    console.error("API Global Error:", err);
+    res.status(err.status || 500).json({ error: err.message || "Unknown API server error" });
+  });
+
+  // Fallback for unmatched API routes
+  app.use("/api", (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
   });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -747,6 +1100,83 @@ ${chatRecords}
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  app.post('/api/search-jd', express.json({limit: '50mb'}), async (req: any, res: any) => {
+    try {
+      const { region, jobType, resumeText } = req.body;
+      const prompt = `你是一位资深的猎头兼ATS，现在有一个候选人希望寻找【${region}】地区的【${jobType}】职位。
+${resumeText ? "根据以下候选人简历，推测3家目前在招对应岗位的大厂或知名公司：\n" + resumeText.substring(0, 2000) : "请生成3个该地区符合大厂标准的真实JD。"}
+
+请返回JSON，结构如下：
+{
+  "jobs": [
+    {
+      "title": "职位名称",
+      "company": "公司名称",
+      "location": "具体商圈或区",
+      "salary": "薪资范围，如 35-60K",
+      "match": 92,
+      "missing": "简历里欠缺的核心经验（一句话）",
+      "strategyData": {
+        "directHint": "内推或投递建议",
+        "jdTrap": "JD描述里的隐性门槛",
+        "hcReality": "真实HC情况测算",
+        "rounds": ["一面基础", "二面架构", "主管面"]
+      }
+    }
+  ]
+}
+必须返回合法的 JSON 对象。`;
+
+      const deepseekKey = process.env.SILICONFLOW_API_KEY || process.env.DEEPSEEK_API_KEY;
+      let content = "";
+      if (deepseekKey) {
+        const apiUrl = process.env.SILICONFLOW_API_KEY 
+          ? (process.env.SILICONFLOW_API_URL || "https://api.siliconflow.cn/v1") 
+          : (process.env.DEEPSEEK_API_URL || "https://api.deepseek.com/v1");
+        const modelName = process.env.SILICONFLOW_API_KEY ? "deepseek-ai/DeepSeek-V3" : "deepseek-chat";
+        const axios = require('axios');
+        const aiResponse = await axios.post(apiUrl + "/chat/completions", {
+          model: modelName,
+          messages: [{ role: "user", content: prompt }],
+          response_format: { type: "json_object" }
+        }, {
+          headers: { "Authorization": "Bearer " + deepseekKey, "Content-Type": "application/json" }
+        });
+        content = aiResponse.data.choices[0].message.content;
+      } else {
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+        });
+        content = response.text() || "{}";
+      }
+
+      if (content.includes("```json")) {
+        content = content.split("```json")[1].split("```")[0].trim();
+      } else if (content.includes("```")) {
+        content = content.split("```")[1].split("```")[0].trim();
+      }
+
+      let parsedData: any = {};
+      try {
+        parsedData = JSON.parse(content);
+      } catch (err: any) {
+         console.error("Parse error:", err);
+         parsedData = { jobs: [{
+             title: "高级前端架构", company: "示例大厂", location: region, salary: "40-70K", match: 85, missing: "全栈能力",
+             strategyData: { directHint: "建议内推", jdTrap: "要求造轮子", hcReality: "可能为池子", rounds: ["1面", "2面", "HR"] }
+         }] };
+      }
+
+      res.json(parsedData.jobs || []);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);

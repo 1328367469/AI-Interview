@@ -1,26 +1,28 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { BookOpen, Wrench, User, Mic, BrainCircuit, Home } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useAppContext } from './context/AppContext';
 import { cn } from './lib/utils';
+import ThemeToggle from './components/ThemeToggle';
+import { ViewState } from './types';
 import HomeView from './views/HomeView';
 import ToolsView from './views/ToolsView';
 import ProfileView from './views/ProfileView';
-import InterviewConfigView from './views/InterviewConfigView';
-import ActiveInterviewView from './views/ActiveInterviewView';
-import ReportView from './views/ReportView';
-import ResumeOptView from './views/ResumeOptView';
-import CareerPlanView from './views/CareerPlanView';
-import LearnView from './views/LearnView';
 import QuestionBankView from './views/QuestionBankView';
-import JdMatchView from './views/JdMatchView';
+import LearnView from './views/LearnView';
+import CareerPlanView from './views/CareerPlanView';
+import ReportView from './views/ReportView';
+import ResumeParserView from './views/ResumeParserView';
+import ResumeLibraryView from './views/ResumeLibraryView';
+import ActiveInterviewView from './views/ActiveInterviewView';
+import InterviewConfigView from './views/InterviewConfigView';
 import OnboardingView from './views/OnboardingView';
-import ThemeToggle from './components/ThemeToggle';
+import JdMatchView from './views/JdMatchView';
 
 export default function MainLayout() {
   const { currentView, navigate } = useAppContext();
 
-  const isImmersive = ['onboarding', 'active-interview', 'report', 'resume-opt', 'career-plan', 'jd-match'].includes(currentView);
+  const isImmersive = ['onboarding', 'interview-active', 'report', 'resume-opt', 'career-plan', 'jd-match', 'resume-parser', 'resume-library'].includes(currentView);
 
   return (
     <div className="flex flex-row h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)] relative selection:bg-cyan-500/30 transition-colors duration-300">
@@ -47,15 +49,15 @@ export default function MainLayout() {
             />
             <SideNavItem 
               icon={<Wrench size={24} />} 
-              label="工具 & 文档" 
-              isActive={currentView === 'tools' || currentView === 'learn'} 
+              label="工具箱" 
+              isActive={currentView === 'tools'} 
               onClick={() => navigate('tools')} 
             />
             <SideNavItem 
-              icon={<BrainCircuit size={24} />} 
-              label="有针对性的刷题" 
-              isActive={currentView === 'learn'} 
-              onClick={() => navigate('learn')} 
+              icon={<BookOpen size={24} />} 
+              label="刷题仓库" 
+              isActive={currentView === 'questions'} 
+              onClick={() => navigate('questions')} 
             />
             <SideNavItem 
               icon={<User size={24} />} 
@@ -86,7 +88,6 @@ export default function MainLayout() {
         
         <div className="flex-1 relative w-full h-full">
           <div className="absolute inset-0 flex justify-center">
-            {/* Phone Frame Guide for Visual Consistency (Optional/Hidden on very large screens) */}
             <div className="w-full max-w-md h-full relative z-10 sm:border-x sm:border-cyan-900/10 sm:bg-[var(--bg-primary)]/30 transition-colors duration-300">
               <AnimatePresence mode="wait">
                 <motion.div
@@ -105,10 +106,11 @@ export default function MainLayout() {
                   {currentView === 'interview-config' && <InterviewConfigView />}
                   {currentView === 'active-interview' && <ActiveInterviewView />}
                   {currentView === 'report' && <ReportView />}
-                  {currentView === 'resume-opt' && <ResumeOptView />}
                   {currentView === 'career-plan' && <CareerPlanView />}
+                  {currentView === 'questions' && <QuestionBankView />}
+                  {currentView === 'resume-parser' && <ResumeParserView />}
+                  {currentView === 'resume-library' && <ResumeLibraryView />}
                   {currentView === 'jd-match' && <JdMatchView />}
-                  {currentView === 'question-bank' && <QuestionBankView />}
                 </motion.div>
               </AnimatePresence>
             </div>
@@ -128,7 +130,7 @@ export default function MainLayout() {
               <NavItem 
                 icon={<Wrench size={22} />} 
                 label="工具箱" 
-                isActive={currentView === 'tools' || currentView === 'learn'} 
+                isActive={currentView === 'tools'} 
                 onClick={() => navigate('tools')} 
               />
               
@@ -146,10 +148,10 @@ export default function MainLayout() {
               </div>
 
               <NavItem 
-                icon={<BrainCircuit size={22} />} 
+                icon={<BookOpen size={22} />} 
                 label="刷题" 
-                isActive={currentView === 'learn'} 
-                onClick={() => navigate('learn')} 
+                isActive={currentView === 'questions'} 
+                onClick={() => navigate('questions')} 
               />
               <NavItem 
                 icon={<User size={22} />} 

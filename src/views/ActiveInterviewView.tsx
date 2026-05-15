@@ -8,18 +8,37 @@ import { useSpeechRecognition } from '../services/audioService';
 import { useEmotionAnalyzer } from '../services/emotionService';
 import axios from 'axios';
 
+// Offline replies as requested by user
+const OFFLINE_REPLIES = [
+  "我明白了。",
+  "好的，我了解了。",
+  "嗯，清楚了。",
+  "好的，感谢你的分享。"
+];
+
+const PRELOADED_QUESTIONS = [
+  "您好，我是系统虚拟面试官。很高兴今天与您交流。准备好的话，请做一个简单的自我介绍。",
+  "我看你上一份工作表现不错，为什么决定离职寻找新的机会呢？",
+  "对于接下来的职业发展，你有什么规划吗？",
+  "如果你负责的前端项目首屏加载很慢，你会从哪些方面去排查和优化？",
+  "针对我们刚才讨论的前端优化，你在实际业务中有遇到过什么特别难解的性能瓶颈吗？"
+];
+
 export default function ActiveInterviewView() {
-  const { navigate, setInterviewResult } = useAppContext() as any;
+  const { navigate, setInterviewResult, interviewSession, setInterviewSession } = useAppContext() as any;
   
   // App state
-  const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [time, setTime] = useState(0);
   const [showConfirm, setShowConfirm] = useState(false);
   
+  // Staged Question State
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(-1);
+  const [unfamiliarTech, setUnfamiliarTech] = useState<string[]>([]);
+  
   // Script and Context
-  const [transcript, setTranscript] = useState("正在建立神经链接...");
+  const [transcript, setTranscript] = useState("准备启动...");
   const [userBuffer, setUserBuffer] = useState("");
   const [interimText, setInterimText] = useState("");
   const hasInitializedRef = useRef(false);
@@ -36,7 +55,6 @@ export default function ActiveInterviewView() {
   useEffect(() => {
     let timeout: any;
     if (!isFaceDetected) {
-       // if face not detected for > 2 seconds, warn
        timeout = setTimeout(() => {
           setCheatWarnings(prev => prev + 1);
           setShowCheatWarning(true);
@@ -53,7 +71,6 @@ export default function ActiveInterviewView() {
     eyeContact: 95
   });
 
-  // Calculate biometrics based on real emotion data
   useEffect(() => {
     setBiometrics(prev => ({
       ...prev,
@@ -64,37 +81,82 @@ export default function ActiveInterviewView() {
 
   // Hook 2: Continuous Hearing
   const handleUserSilence = async () => {
-    // If the user hasn't spoken anything, ignore
     if (userBuffer.trim().length === 0 && interimText.trim().length === 0) return;
     if (isAiSpeaking) return;
     
     const finalUserInput = userBuffer + " " + interimText;
-    setUserBuffer(""); // Clear buffer immediately
+    setUserBuffer(""); 
     setInterimText("");
-    stopListening(); // Pause listening while AI thinks/speaks
-    setTranscript("Analyzing User Input...");
+    stopListening(); 
+    setTranscript("分析片段命中词...");
     
-    try {
-      // Fetch AI response
-      const res = await axios.post('/api/chat', { message: finalUserInput, isInterviewMode: true }, { responseType: 'text' });
-      // Clean up server-sent events to plain text for simplicity
-      const textResponse = res.data.split('\n').filter((l: string) => l.startsWith('data: ') && !l.includes('[DONE]')).map((l: string) => {
-        try { return JSON.parse(l.slice(6)).choices[0].delta.content || ""; } catch { return ""; }
-      }).join('');
-      
-      let cleanResponse = textResponse.replace(/[#*]/g, ''); // Basic markdown cleanup for TTS
-      
-      let isEnding = false;
-      if (cleanResponse.includes('[INTERVIEW_ENDED]')) {
-         cleanResponse = cleanResponse.replace('[INTERVIEW_ENDED]', '').trim();
-         isEnding = true;
-      }
+    const { questions, records } = interviewSession;
+    
+    let generatedReply = "";
+    let isEnding = false;
+    let matchRate = 0;
+    
+    if (currentQuestionIndex === -1) {
+        // Just started, the user responded to the opening
+        setCurrentQuestionIndex(0);
+        generatedReply = "那么第一个问题：" + questions[0].spokenText;
+    } else {
+        const currentQ = questions[currentQuestionIndex];
+        const keywords = currentQ.expectedKeywords || [];
+        
+        let matchCount = 0;
+        if (keywords.length > 0) {
+           matchCount = keywords.filter((kw: string) => finalUserInput.toLowerCase().includes(kw.toLowerCase())).length;
+           matchRate = matchCount / keywords.length;
+        } else {
+           matchRate = finalUserInput.length > 20 ? 1 : 0;
+        }
 
-      speakText(cleanResponse, isEnding);
-    } catch (e) {
-      speakText("抱歉，网络通讯出现异常，请再说一遍。");
-      startListening();
+        // Add Record
+        setInterviewSession((prev: any) => ({
+            ...prev,
+            records: [...prev.records, {
+                question: currentQ.question,
+                spokenText: currentQ.spokenText,
+                expectedKeywords: keywords,
+                userAnswer: finalUserInput,
+                matchRate
+            }]
+        }));
+
+        // Extract unfamiliar tech stacks
+        const negativeKeywords = ["不知道", "不了解", "没听过", "不熟悉", "忘了"];
+        const hasNegative = negativeKeywords.some(kw => finalUserInput.includes(kw));
+        if (hasNegative || matchRate < 0.2) {
+           setUnfamiliarTech(prev => Array.from(new Set([...prev, currentQ.knowledgePoint])));
+        }
+
+        await new Promise(r => setTimeout(r, 800));
+
+        const isRelevant = finalUserInput.length > 10;
+        if (!isRelevant) {
+          // Follow up
+          generatedReply = "你好像没有正面回答我的问题或者说得太简短了，能详细一点说吗？我想了解的是：" + currentQ.spokenText;
+          // Don't advance index
+        } else {
+          // Good or acceptable answer
+          const replyPrefix = OFFLINE_REPLIES[Math.floor(Math.random() * OFFLINE_REPLIES.length)];
+          if (currentQuestionIndex < questions.length - 1) {
+             generatedReply = replyPrefix + " 那么下一个问题，" + questions[currentQuestionIndex + 1].spokenText;
+             setCurrentQuestionIndex(prev => prev + 1);
+          } else {
+             generatedReply = replyPrefix + " 今天的面试差不多就到这里了，后续系统会生成专家的面试诊断报告给你，祝你好运。[INTERVIEW_ENDED]";
+          }
+        }
     }
+    
+    let cleanResponse = generatedReply;
+    if (cleanResponse.includes('[INTERVIEW_ENDED]')) {
+       cleanResponse = cleanResponse.replace('[INTERVIEW_ENDED]', '').trim();
+       isEnding = true;
+    }
+
+    speakText(cleanResponse, isEnding);
   };
 
   const { isListening, startListening, stopListening } = useSpeechRecognition({
@@ -113,7 +175,6 @@ export default function ActiveInterviewView() {
     let activeStream: MediaStream | null = null;
     async function setupCamera() {
       const hasPermission = await requestCameraPermissions();
-      if (!hasPermission) console.warn("Native camera permission not granted");
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, 
@@ -134,7 +195,13 @@ export default function ActiveInterviewView() {
     const finishInterview = () => {
         stopListening();
         window.speechSynthesis?.cancel();
-        setInterviewResult({ stress: stressLevel, confidence: biometrics.confidence, duration: time, metrics: { depth: 85, breadth: 72, logic: 90, clarity: 88 } });
+        setInterviewResult({ 
+          stress: stressLevel, 
+          confidence: biometrics.confidence, 
+          duration: time, 
+          metrics: { depth: 85, breadth: 72, logic: 90, clarity: 88 },
+          unfamiliarTech 
+        });
         navigate('report');
     };
 
@@ -165,14 +232,14 @@ export default function ActiveInterviewView() {
       utterance.onstart = () => {
         setIsAiSpeaking(true);
         setTranscript(text);
-        stopListening(); // Ensure microphone is off while speaking
+        stopListening(); 
       };
       utterance.onend = () => {
         setIsAiSpeaking(false);
         if (isEnding) {
            finishInterview();
         } else {
-           startListening(); // Resume listening when done
+           startListening(); 
         }
       };
       utterance.onerror = () => {
@@ -187,44 +254,7 @@ export default function ActiveInterviewView() {
       window.speechSynthesis.speak(utterance);
     };
 
-    try {
-       setIsAiSpeaking(true);
-       setTranscript(text);
-       stopListening();
-       
-       const response = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text })
-       });
-
-       if (!response.ok) throw new Error("TTS API Error");
-
-       const blob = await response.blob();
-       const url = URL.createObjectURL(blob);
-       const audio = new Audio(url);
-       
-       audio.onended = () => {
-          setIsAiSpeaking(false);
-          URL.revokeObjectURL(url);
-          if (isEnding) {
-             finishInterview();
-          } else {
-             startListening();
-          }
-       };
-       
-       audio.onerror = () => {
-          setIsAiSpeaking(false);
-          URL.revokeObjectURL(url);
-          playFallback();
-       }
-
-       await audio.play();
-    } catch (e) {
-       console.error("TTS fetch failed, using fallback:", e);
-       playFallback();
-    }
+    playFallback(); // Forcing fallback immediately for faster simulation
   };
 
   // Initial Greeting
@@ -233,17 +263,8 @@ export default function ActiveInterviewView() {
     hasInitializedRef.current = true;
 
     const initInterview = async () => {
-      try {
-        setTranscript("正在加载候选人简历并生成前置问题...");
-        const res = await axios.post('/api/chat', { message: "你好，请根据我的简历进行开场并提出第一个问题。", isInterviewMode: true }, { responseType: 'text' });
-        const textResponse = res.data.split('\n').filter((l: string) => l.startsWith('data: ') && !l.includes('[DONE]')).map((l: string) => {
-          try { return JSON.parse(l.slice(6)).choices[0].delta.content || ""; } catch { return ""; }
-        }).join('');
-        const cleanResponse = textResponse.replace(/[#*]/g, '');
-        speakText(cleanResponse || "您好，我是系统虚拟面试官。很高兴今天与您交流。准备好的话，请做一个简单的自我介绍。");
-      } catch (e) {
-        speakText("您好，我是系统虚拟面试官。很高兴今天与您交流。准备好的话，请做一个简单的自我介绍。");
-      }
+        // Pre-load logic happened conceptually before loading screen ends
+        speakText(interviewSession?.opening || "系统初始化完成，请做个自我介绍吧。");
     };
     
     initInterview();
@@ -315,7 +336,7 @@ export default function ActiveInterviewView() {
             <div className="text-[9px] font-mono text-slate-400 tracking-widest mt-2 px-1">
               STRESS: {stressLevel.toFixed(1)}%<br/>
               CONFIDENCE: {biometrics.confidence.toFixed(1)}%<br/>
-              STATE: {currentEmotion}
+              CURRENT Q: {Math.max(0, currentQuestionIndex + 1)}/{interviewSession?.questions?.length || 1}
             </div>
             
             <AnimatePresence>
@@ -421,7 +442,13 @@ export default function ActiveInterviewView() {
                   onClick={() => {
                     stopListening();
                     window.speechSynthesis?.cancel();
-                    setInterviewResult({ stress: stressLevel, confidence: biometrics.confidence, duration: time, metrics: { depth: 85, breadth: 72, logic: 90, clarity: 88 } });
+                    setInterviewResult({ 
+                      stress: stressLevel, 
+                      confidence: biometrics.confidence, 
+                      duration: time, 
+                      metrics: { depth: 85, breadth: 72, logic: 90, clarity: 88 },
+                      unfamiliarTech
+                    });
                     setShowConfirm(false);
                     navigate('report');
                   }}

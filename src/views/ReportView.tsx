@@ -5,7 +5,7 @@ import { useAppContext } from '../context/AppContext';
 import axios from 'axios';
 
 export default function ReportView() {
-  const { navigate, interviewResult } = useAppContext() as any;
+  const { navigate, interviewResult, interviewSession } = useAppContext() as any;
   const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -14,7 +14,8 @@ export default function ReportView() {
       try {
         const res = await axios.post('/api/generate-report', {
           userId: 'user_123',
-          interviewResult
+          interviewResult,
+          interviewRecords: interviewSession?.records || []
         });
         setReport(res.data);
       } catch (e) {
@@ -68,17 +69,41 @@ export default function ReportView() {
 
         {/* Global Score Core */}
         <div className="flex flex-col items-center justify-center pt-4 pb-8 border-b border-slate-800/50">
-          <motion.div 
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="w-40 h-40 rounded-full border border-emerald-500/30 flex items-center justify-center relative bg-emerald-950/20 shadow-[0_0_40px_rgba(16,185,129,0.1)] mb-6 hexagon"
-          >
-            <div className="absolute inset-2 border border-emerald-500/20 rounded-full hexagon"></div>
-            <div className="absolute inset-4 border border-emerald-500/10 rounded-full hexagon flex flex-col items-center justify-center">
-              <span className="text-4xl sm:text-5xl font-black font-mono text-emerald-400 text-glow">{report.sysScore || 85}</span>
-              <span className="text-[8px] sm:text-[10px] text-emerald-500/80 uppercase tracking-widest font-mono mt-1 text-center leading-tight">SYS_SCORE<br/>(系统评分)</span>
-            </div>
-          </motion.div>
+          {report.hireDecision ? (
+             <div className="flex flex-col items-center mb-6">
+               <motion.div 
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className={`w-36 h-36 rounded-full border flex items-center justify-center relative shadow-[0_0_40px_rgba(0,0,0,0.2)] mb-4 hexagon ${report.hireDecision.decision === 'Hire' ? 'border-emerald-500/50 bg-emerald-950/30' : report.hireDecision.decision === 'Hold' ? 'border-amber-500/50 bg-amber-950/30' : 'border-rose-500/50 bg-rose-950/30'}`}
+                >
+                  <div className={`absolute inset-2 border rounded-full hexagon ${report.hireDecision.decision === 'Hire' ? 'border-emerald-500/30' : report.hireDecision.decision === 'Hold' ? 'border-amber-500/30' : 'border-rose-500/30'}`}></div>
+                  <div className={`absolute inset-4 border rounded-full hexagon flex flex-col items-center justify-center ${report.hireDecision.decision === 'Hire' ? 'border-emerald-500/20' : report.hireDecision.decision === 'Hold' ? 'border-amber-500/20' : 'border-rose-500/20'}`}>
+                    <span className={`text-2xl sm:text-3xl font-black font-mono tracking-widest uppercase text-glow ${report.hireDecision.decision === 'Hire' ? 'text-emerald-400' : report.hireDecision.decision === 'Hold' ? 'text-amber-400' : 'text-rose-400'}`}>
+                      {report.hireDecision.decision}
+                    </span>
+                    <span className="text-[8px] sm:text-[10px] text-slate-400 uppercase tracking-widest font-mono mt-1 text-center leading-tight">
+                      录用决策
+                    </span>
+                  </div>
+               </motion.div>
+               <div className="text-center max-w-sm px-4">
+                 <p className="text-sm text-slate-300 font-medium">"{report.hireDecision.reason}"</p>
+               </div>
+             </div>
+          ) : (
+            <motion.div 
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="w-40 h-40 rounded-full border border-emerald-500/30 flex items-center justify-center relative bg-emerald-950/20 shadow-[0_0_40px_rgba(16,185,129,0.1)] mb-6 hexagon"
+            >
+              <div className="absolute inset-2 border border-emerald-500/20 rounded-full hexagon"></div>
+              <div className="absolute inset-4 border border-emerald-500/10 rounded-full hexagon flex flex-col items-center justify-center">
+                <span className="text-4xl sm:text-5xl font-black font-mono text-emerald-400 text-glow">{report.sysScore || 85}</span>
+                <span className="text-[8px] sm:text-[10px] text-emerald-500/80 uppercase tracking-widest font-mono mt-1 text-center leading-tight">SYS_SCORE<br/>(系统评分)</span>
+              </div>
+            </motion.div>
+          )}
+
           <h2 className="text-2xl font-bold text-white tracking-wide">{report.title || "分析报告"}</h2>
           <p className="text-sm text-slate-400 mt-2 font-mono flex items-center gap-2"><Cpu size={14}/> 基于当前面试状态动态生成</p>
         </div>
@@ -121,6 +146,23 @@ export default function ReportView() {
                 </li>
               ))}
             </ul>
+          </div>
+
+          <div className="tech-glass p-5 rounded-2xl border border-blue-900/30">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-blue-400 mb-4 bg-blue-950/50 inline-flex px-3 py-1 rounded border border-blue-900 border-l-4 border-l-blue-400/80 uppercase">
+              <Crosshair size={16} /> 问答切片剖析
+            </h3>
+            <div className="space-y-4">
+               {(report.analysis || []).map((detail: any, idx: number) => (
+                 <div key={idx} className="bg-slate-900/60 p-4 rounded-xl border border-slate-800 text-sm">
+                   <div className="text-slate-300 font-bold mb-2">Q: {detail.question}</div>
+                   <div className="text-slate-400 mb-3 bg-slate-950 p-2 rounded">回答: {detail.userAnswer}</div>
+                   <div className="text-amber-400/90 text-xs leading-relaxed border-l-2 border-amber-500/50 pl-3">
+                     <span className="font-bold text-amber-500">点评: </span>{detail.critique}
+                   </div>
+                 </div>
+               ))}
+            </div>
           </div>
 
           <div className="tech-glass p-5 rounded-2xl border border-cyan-900/30">
@@ -178,6 +220,25 @@ export default function ReportView() {
                ))}
             </div>
           </div>
+
+          {report.targetedQuestions && report.targetedQuestions.length > 0 && (
+            <div className="tech-glass p-5 rounded-2xl border border-fuchsia-900/30">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-fuchsia-400 mb-4 bg-fuchsia-950/50 inline-flex px-3 py-1 rounded border border-fuchsia-900 border-l-4 border-l-fuchsia-400/80 uppercase">
+                <Crosshair size={16} /> 盲区专项突击
+              </h3>
+              <div className="space-y-4">
+                {report.targetedQuestions.map((q: any, idx: number) => (
+                  <div key={idx} className="bg-slate-900/80 p-4 rounded-xl text-sm border border-slate-800">
+                    <div className="font-bold text-slate-200 mb-2">{q.question}</div>
+                    <div className="text-xs text-slate-400 bg-slate-950 p-2 rounded flex items-start gap-2">
+                      <span className="text-fuchsia-500 font-mono shrink-0">FOCUS:</span>
+                      <span>{q.focus}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           
           <button 
             className="mt-2 w-full py-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-colors font-bold uppercase tracking-widest text-[13px]"
