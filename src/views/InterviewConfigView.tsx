@@ -6,13 +6,12 @@ import { cn } from '../lib/utils';
 import axios from 'axios';
 
 export default function InterviewConfigView() {
-  const { navigate, setInterviewSession, parsedResumeResult } = useAppContext() as any;
+  const { navigate, setInterviewSession, parsedResumeResult, isGeneratingInterview: isStarting, setIsGeneratingInterview: setIsStarting } = useAppContext() as any;
   
   const [type, setType] = useState('depth');
   const [duration, setDuration] = useState('30');
   const [targetRole, setTargetRole] = useState('高级产品经理');
   const [showJobModal, setShowJobModal] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
 
   const handleStart = async () => {
     if (isStarting) return;
@@ -35,9 +34,9 @@ export default function InterviewConfigView() {
         setIsStarting(false);
         // fallback
         setInterviewSession({
-           opening: "您好，我是系统虚拟面试官。很高兴今天与您交流。准备好的话，请做一个简单的自我介绍。",
+           opening: "你好呀，系统已经准备好了，咱们随时可以开始。能先简单做个自我介绍吗？",
            questions: [
-             { id: 1, question: "请做一个简单的自我介绍吧。", spokenText: "请做一个简单的自我介绍吧。", expectedKeywords: ["经历", "技术"], knowledgePoint: "背景" }
+             { id: 1, question: "简单自我介绍", spokenText: "介绍一下你自己吧，重点说一下和你应聘岗位相关的经历。", expectedKeywords: ["经历", "技术", "业务"], knowledgePoint: "背景与沟通表达" }
            ],
            records: []
         });

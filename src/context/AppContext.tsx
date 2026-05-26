@@ -33,12 +33,22 @@ interface AppContextValue {
   setParseErrorMsg: React.Dispatch<React.SetStateAction<string | null>>;
   interviewSession: any;
   setInterviewSession: React.Dispatch<React.SetStateAction<any>>;
+  isGeneratingInterview: boolean;
+  setIsGeneratingInterview: React.Dispatch<React.SetStateAction<boolean>>;
+  isAnalyzingJd: boolean;
+  setIsAnalyzingJd: React.Dispatch<React.SetStateAction<boolean>>;
+  jdResultReady: boolean;
+  setJdResultReady: React.Dispatch<React.SetStateAction<boolean>>;
+  jdJobs: any[];
+  setJdJobs: React.Dispatch<React.SetStateAction<any[]>>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentView, setCurrentView] = useState<ViewState>(() => {
+    const isLoggedIn = localStorage.getItem('nexus_auth_token');
+    if (!isLoggedIn) return 'auth';
     const hasSeenOnboarding = localStorage.getItem('nexus_onboarding_seen');
     return hasSeenOnboarding ? 'home' : 'onboarding';
   });
@@ -63,6 +73,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [interviewResult, setInterviewResult] = useState<any>(null);
   const [interviewSession, setInterviewSession] = useState<any>(null);
+  
+  const [isGeneratingInterview, setIsGeneratingInterview] = useState(false);
+  const [isAnalyzingJd, setIsAnalyzingJd] = useState(false);
+  const [jdResultReady, setJdResultReady] = useState(false);
+  const [jdJobs, setJdJobs] = useState<any[]>([]);
+
+  // Generated Training Questions
+  const [generatedQuestions, setGeneratedQuestions] = useState<any[]>([]);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+  const [questionsGenerationStep, setQuestionsGenerationStep] = useState(0);
 
   const userId = 'user_123';
 
@@ -148,7 +168,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       parseErrorMsg,
       setParseErrorMsg,
       interviewSession,
-      setInterviewSession
+      setInterviewSession,
+      isGeneratingInterview,
+      setIsGeneratingInterview,
+      isAnalyzingJd,
+      setIsAnalyzingJd,
+      jdResultReady,
+      setJdResultReady,
+      jdJobs,
+      setJdJobs,
+      generatedQuestions,
+      setGeneratedQuestions,
+      isGeneratingQuestions,
+      setIsGeneratingQuestions,
+      questionsGenerationStep,
+      setQuestionsGenerationStep
     } as any}>
       {children}
     </AppContext.Provider>

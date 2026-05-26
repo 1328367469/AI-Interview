@@ -9,7 +9,7 @@ import Markdown from 'react-markdown';
 let cachedInterviews: any[] | null = null;
 
 export default function QuestionBankView() {
-  const { userProfile, navigate } = useAppContext();
+  const { userProfile, navigate, generatedQuestions, isGeneratingQuestions } = useAppContext() as any;
   const [searchQuery, setSearchQuery] = useState('');
   const [interviews, setInterviews] = useState<any[]>(cachedInterviews || []);
   const [isLoading, setIsLoading] = useState(!cachedInterviews);
@@ -103,6 +103,26 @@ export default function QuestionBankView() {
     return sorted;
   }, [interviews, userProfile, searchQuery]);
 
+  const generationSteps = [
+    "🧠 AI 正在读取您的专属面诊报告...",
+    "🔍 正在提炼核心技术盲区...",
+    "📝 结合全网面经并匹配考点...",
+    "✨ 正在生成您的专属模拟训练题..."
+  ];
+
+  const [loadingStep, setLoadingStep] = useState(0);
+  useEffect(() => {
+    if (!isGeneratingQuestions) return;
+    let currentStep = 0;
+    const interval = setInterval(() => {
+       if (currentStep < 3) {
+          currentStep++;
+          setLoadingStep(currentStep);
+       }
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [isGeneratingQuestions]);
+
   return (
     <div className="flex flex-col h-full bg-[#0a0f18] overflow-y-auto pb-safe custom-scrollbar">
       <header className="px-5 py-6 sticky top-0 bg-[#0a0f18]/95 backdrop-blur-xl z-20">
@@ -133,60 +153,66 @@ export default function QuestionBankView() {
       </div>
 
       <div className="px-5 mt-6 pb-12 space-y-4">
-        {isLoading ? (
-          <div className="text-center py-10 text-slate-500 font-mono text-sm animate-pulse">
-            LOADING KNOWLEDGE BASE...
-          </div>
-        ) : scoredInterviews.length > 0 ? (
-          scoredInterviews.map((item, idx) => {
-            const tags = item.parsedTags;
-            const matchPercentage = Math.min(Math.round((item.matchScore / 60) * 100), 99); // Normalize a bit
-            
-            return (
+        {isGeneratingQuestions ? (
+            <div className="py-20 flex flex-col items-center justify-center">
+              <div className="relative w-24 h-24 mb-8">
+                <motion.div 
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 3, ease: "linear", repeat: Infinity }}
+                  className="absolute inset-0 rounded-full border-t-2 border-l-2 border-cyan-500 opacity-80"
+                />
+                <motion.div 
+                  animate={{ rotate: -360 }}
+                  transition={{ duration: 4, ease: "linear", repeat: Infinity }}
+                  className="absolute inset-3 rounded-full border-b-2 border-r-2 border-fuchsia-500 opacity-60"
+                />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <TerminalSquare className="text-cyan-400" size={32} />
+                </div>
+              </div>
               <motion.div 
+                key={loadingStep}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.05 }}
-                key={item.id}
-                className="bg-[#111827] border border-[#1f2937] rounded-2xl overflow-hidden transition-all hover:border-cyan-900/50 relative"
+                className="text-cyan-400 font-mono tracking-widest text-sm text-center"
               >
-                {item.matchScore > 20 && (
-                  <div className="absolute top-0 right-0 bg-gradient-to-l from-emerald-500/20 to-transparent pl-8 pr-4 py-1 text-[10px] text-emerald-400 font-mono font-bold tracking-widest rounded-bl-xl border-b border-l border-emerald-500/20">
-                    MATCH: {matchPercentage > 0 ? matchPercentage : 45}%
+                {generationSteps[loadingStep] || "处理中..."}
+              </motion.div>
+            </div>
+          ) : generatedQuestions && generatedQuestions.length > 0 ? (
+            <div className="space-y-8">
+              {generatedQuestions.map((cat: any, i: number) => (
+                <div key={i} className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-4 bg-cyan-500 rounded-full"></span>
+                    <h2 className="text-lg font-bold text-white tracking-wide">{cat.categoryName}专区</h2>
+                    <span className="text-xs text-slate-500 font-mono">({cat.questions.length} 题)</span>
                   </div>
-                )}
-                
-                <div 
-                  className="p-5 cursor-pointer pt-6"
-                  onClick={() => setActiveDoc(item)}
-                >
-                  <div className="flex items-start gap-4">
-                    <TerminalSquare className={cn("shrink-0 mt-1", item.matchScore > 20 ? "text-emerald-500" : "text-cyan-600")} size={20} />
-                    <div className="flex-1">
-                      <h3 className="text-[16px] font-bold text-white mb-3 leading-snug pr-16">{item.title}</h3>
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {tags.map((tag: string, i: number) => (
-                          <span key={i} className="px-2.5 py-1 bg-[#1f2937] text-slate-300 text-[11px] font-mono rounded border border-slate-700 uppercase tracking-wide">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
-                        <div className="flex items-center gap-1.5 text-amber-500">
-                          <Star size={14} className="fill-amber-500" />
-                          <span>{item.accesses} accesses</span>
+                  <div className="grid gap-4">
+                    {cat.questions.map((q: any, qIdx: number) => (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: qIdx * 0.02 }}
+                        key={qIdx}
+                        className="bg-[#111827] border border-[#1f2937] p-5 rounded-2xl cursor-pointer hover:border-cyan-900/50"
+                        onClick={() => setActiveDoc({ title: q.question, content: q.answer, accesses: Math.floor(Math.random() * 100) + 10 })}
+                      >
+                        <h3 className="font-bold text-slate-200 mb-2">{q.question}</h3>
+                        <div className="text-xs text-slate-500 font-mono flex items-center justify-between">
+                          <span>专项突破</span>
+                          <span className="text-cyan-600 font-bold hover:text-cyan-400 transition-colors">查看详细解法 →</span>
                         </div>
-                        <span>{item.days_ago} 天前</span>
-                      </div>
-                    </div>
+                      </motion.div>
+                    ))}
                   </div>
                 </div>
-              </motion.div>
-            );
-          })
-        ) : (
-           <div className="text-center py-10 text-slate-500 font-mono text-sm">NO_DATA_FOUND</div>
-        )}
+              ))}
+            </div>
+          ) : (
+             <div className="text-center py-10 text-slate-500 font-mono text-sm">暂无专属训练题，请先参加模拟面试并生成报告</div>
+          )
+        }
       </div>
 
       <AnimatePresence>

@@ -10,18 +10,18 @@ import axios from 'axios';
 
 // Offline replies as requested by user
 const OFFLINE_REPLIES = [
-  "我明白了。",
-  "好的，我了解了。",
-  "嗯，清楚了。",
-  "好的，感谢你的分享。"
+  "明白了。",
+  "好的，听懂你的意思了。",
+  "嗯嗯，清楚了。",
+  "原来如此，感谢分享。"
 ];
 
 const PRELOADED_QUESTIONS = [
-  "您好，我是系统虚拟面试官。很高兴今天与您交流。准备好的话，请做一个简单的自我介绍。",
-  "我看你上一份工作表现不错，为什么决定离职寻找新的机会呢？",
-  "对于接下来的职业发展，你有什么规划吗？",
-  "如果你负责的前端项目首屏加载很慢，你会从哪些方面去排查和优化？",
-  "针对我们刚才讨论的前端优化，你在实际业务中有遇到过什么特别难解的性能瓶颈吗？"
+  "你好呀，系统已经初始化完毕了，能先简单做个自我介绍吗？",
+  "我看你简历上的经历挺丰富的，能挑一个你觉得最有成就感的项目，讲讲你是怎么做的吗？",
+  "那在这个项目里，遇到过什么特别头疼的难题吗？你是怎么解决的？",
+  "如果你负责的前端首屏加载特别慢，你平时一般会从哪些方面入手排查呢？",
+  "对于接下来的职业发展，你个人有什么具体的规划或者比较想尝试的方向吗？"
 ];
 
 export default function ActiveInterviewView() {
@@ -112,6 +112,15 @@ export default function ActiveInterviewView() {
            matchRate = finalUserInput.length > 20 ? 1 : 0;
         }
 
+        const isRelevant = finalUserInput.length > 10;
+        let tag = "";
+        const negativeKeywords = ["不知道", "不了解", "没听过", "不熟悉", "忘了"];
+        const hasNegative = negativeKeywords.some(kw => finalUserInput.includes(kw));
+
+        if (!isRelevant) tag = "[简短敷衍] ";
+        if (matchRate < 0.2 && !isRelevant) tag += "[偏题/未答出] ";
+        if (hasNegative) tag += "[明确表示不会] ";
+
         // Add Record
         setInterviewSession((prev: any) => ({
             ...prev,
@@ -119,33 +128,40 @@ export default function ActiveInterviewView() {
                 question: currentQ.question,
                 spokenText: currentQ.spokenText,
                 expectedKeywords: keywords,
-                userAnswer: finalUserInput,
+                userAnswer: (tag ? tag + ": " : "") + finalUserInput,
                 matchRate
             }]
         }));
 
         // Extract unfamiliar tech stacks
-        const negativeKeywords = ["不知道", "不了解", "没听过", "不熟悉", "忘了"];
-        const hasNegative = negativeKeywords.some(kw => finalUserInput.includes(kw));
         if (hasNegative || matchRate < 0.2) {
            setUnfamiliarTech(prev => Array.from(new Set([...prev, currentQ.knowledgePoint])));
         }
 
         await new Promise(r => setTimeout(r, 800));
 
-        const isRelevant = finalUserInput.length > 10;
-        if (!isRelevant) {
-          // Follow up
-          generatedReply = "你好像没有正面回答我的问题或者说得太简短了，能详细一点说吗？我想了解的是：" + currentQ.spokenText;
-          // Don't advance index
+        if (!isRelevant || hasNegative) {
+          if (hasNegative) {
+             // User explicitly doesn't know, advance to next question
+             if (currentQuestionIndex < questions.length - 1) {
+                generatedReply = "没问题，这块不熟悉也没关系。那我们换个角度，" + questions[currentQuestionIndex + 1].spokenText;
+                setCurrentQuestionIndex(prev => prev + 1);
+             } else {
+                generatedReply = "好的，没关系。那咱们今天的技术交流差不多就到这里了，后续会有报告生成，感谢你的时间。[INTERVIEW_ENDED]";
+             }
+          } else {
+             // Response is just too short
+             generatedReply = "刚才听得不太具体，能结合你之前做过的项目，稍微展开讲讲细节吗？";
+             // Don't advance index, let them try again
+          }
         } else {
-          // Good or acceptable answer
+          // Good or acceptable answer length
           const replyPrefix = OFFLINE_REPLIES[Math.floor(Math.random() * OFFLINE_REPLIES.length)];
           if (currentQuestionIndex < questions.length - 1) {
-             generatedReply = replyPrefix + " 那么下一个问题，" + questions[currentQuestionIndex + 1].spokenText;
+             generatedReply = replyPrefix + " 那么下一个想聊聊，" + questions[currentQuestionIndex + 1].spokenText;
              setCurrentQuestionIndex(prev => prev + 1);
           } else {
-             generatedReply = replyPrefix + " 今天的面试差不多就到这里了，后续系统会生成专家的面试诊断报告给你，祝你好运。[INTERVIEW_ENDED]";
+             generatedReply = replyPrefix + " 好的，非常感谢你的分享。今天的面试差不多就到这里了，稍后系统会生成一份诊断报告，祝你好运！[INTERVIEW_ENDED]";
           }
         }
     }
@@ -167,7 +183,8 @@ export default function ActiveInterviewView() {
     onInterimResult: (text: string) => {
        setInterimText(text);
     },
-    onSilence: handleUserSilence
+    onSilence: handleUserSilence,
+    silenceDuration: 3000 // 【后台配置】停顿多少毫秒后自动判断为说完 (例如: 4000或5000)
   });
 
   // Camera Setup
@@ -205,23 +222,33 @@ export default function ActiveInterviewView() {
         navigate('report');
     };
 
-    const playFallback = () => {
+    const playFallback = async () => {
       if (!window.speechSynthesis) {
          if (isEnding) finishInterview();
          return;
       }
+      
+      // Ensure voices are loaded first to keep consistency
+      let voices = window.speechSynthesis.getVoices();
+      if (voices.length === 0) {
+        await new Promise<void>(resolve => {
+          window.speechSynthesis.onvoiceschanged = () => { resolve(); };
+          setTimeout(resolve, 1000);
+        });
+        voices = window.speechSynthesis.getVoices();
+      }
+
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       
-      const voices = window.speechSynthesis.getVoices();
       const zhVoices = voices.filter(v => v.lang.includes('zh') || v.lang.includes('cmn'));
       if (zhVoices.length > 0) {
-         const preferred = zhVoices.find(v => v.name.includes('Xiaoxiao') || v.name.includes('Tingting') || v.name.includes('Google'));
-         if (preferred) {
-           utterance.voice = preferred;
-         } else {
-           utterance.voice = zhVoices[0];
-         }
+         let preferred = zhVoices.find(v => v.name.includes('Xiaoxiao') && v.lang === 'zh-CN');
+         if (!preferred) preferred = zhVoices.find(v => v.name.includes('Tingting') && v.lang === 'zh-CN');
+         if (!preferred) preferred = zhVoices.find(v => v.name.includes('Google') && v.lang === 'zh-CN');
+         if (!preferred) preferred = zhVoices.find(v => v.lang === 'zh-CN') || zhVoices[0];
+         
+         utterance.voice = preferred;
       }
 
       utterance.volume = 1;
@@ -257,28 +284,19 @@ export default function ActiveInterviewView() {
     playFallback(); // Forcing fallback immediately for faster simulation
   };
 
-  // Initial Greeting
-  useEffect(() => {
-    if (hasInitializedRef.current) return;
-    hasInitializedRef.current = true;
-
-    const initInterview = async () => {
-        // Pre-load logic happened conceptually before loading screen ends
-        speakText(interviewSession?.opening || "系统初始化完成，请做个自我介绍吧。");
-    };
-    
-    initInterview();
-    
-    return () => {
-      window.speechSynthesis?.cancel();
-    };
-  }, []);
+  const [hasStarted, setHasStarted] = useState(false);
+  
+  const initInterview = async () => {
+      setHasStarted(true);
+      speakText(interviewSession?.opening || "系统初始化完成，请做个自我介绍吧。");
+  };
 
   // Timer
   useEffect(() => {
+    if (!hasStarted) return;
     const t = setInterval(() => setTime(prev => prev + 1), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [hasStarted]);
 
   const [visualVolume, setVisualVolume] = useState(0.2);
   useEffect(() => {
@@ -298,6 +316,34 @@ export default function ActiveInterviewView() {
 
   return (
     <div className="flex h-full bg-slate-950 relative overflow-hidden">
+      <AnimatePresence>
+         {!hasStarted && (
+           <motion.div 
+             initial={{ opacity: 0 }} 
+             animate={{ opacity: 1 }} 
+             exit={{ opacity: 0 }} 
+             className="absolute inset-0 z-[100] bg-slate-950/90 backdrop-blur-md flex items-center justify-center flex-col gap-8 px-6 text-center"
+           >
+             <div>
+                <div className="w-16 h-16 bg-cyan-500/10 border border-cyan-500/30 rounded-full flex items-center justify-center mx-auto mb-6 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
+                  <Mic size={24} className="text-cyan-400" />
+                </div>
+                <div className="text-cyan-400 font-mono text-xs tracking-widest mb-4">SYSTEM READY</div>
+                <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3 tracking-wide">面试环境已就绪</h2>
+                <p className="text-slate-400 text-sm max-w-sm mx-auto leading-relaxed">
+                  系统已为您生成专属面试大纲。<br/>由于安全限制，需点击下方按钮激活 AI 语音权限。
+                </p>
+             </div>
+             
+             <button 
+               onClick={initInterview}
+               className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-4 px-12 rounded-full shadow-[0_4px_20px_rgba(6,182,212,0.4)] transition-all uppercase tracking-widest text-sm active:scale-95"
+             >
+               开始面试 / START
+             </button>
+           </motion.div>
+         )}
+      </AnimatePresence>
       
       {/* MAIN VIEW (AI Interviewer) */}
       <div className="absolute inset-0 z-0 bg-slate-900 flex items-center justify-center overflow-hidden">
@@ -331,7 +377,7 @@ export default function ActiveInterviewView() {
               {formatTime(time)}
             </div>
             <div className="text-[10px] font-bold tracking-widest uppercase text-cyan-400 text-glow leading-tight">
-              {isListening ? 'MIC ACTIVE (收音中)' : 'AI SPEAKING...'}
+              {!hasStarted ? 'SYSTEM READY' : isAiSpeaking ? 'AI SPEAKING...' : isListening ? 'MIC ACTIVE (收音中)' : 'WAITING...'}
             </div>
             <div className="text-[9px] font-mono text-slate-400 tracking-widest mt-2 px-1">
               STRESS: {stressLevel.toFixed(1)}%<br/>

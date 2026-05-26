@@ -17,12 +17,13 @@ import ResumeLibraryView from './views/ResumeLibraryView';
 import ActiveInterviewView from './views/ActiveInterviewView';
 import InterviewConfigView from './views/InterviewConfigView';
 import OnboardingView from './views/OnboardingView';
+import AuthView from './views/AuthView';
 import JdMatchView from './views/JdMatchView';
 
 export default function MainLayout() {
   const { currentView, navigate } = useAppContext();
 
-  const isImmersive = ['onboarding', 'interview-active', 'report', 'resume-opt', 'career-plan', 'jd-match', 'resume-parser', 'resume-library'].includes(currentView);
+  const isImmersive = ['auth', 'onboarding', 'active-interview', 'report', 'resume-opt', 'career-plan', 'jd-match', 'resume-parser', 'resume-library'].includes(currentView);
 
   return (
     <div className="flex flex-row h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)] relative selection:bg-cyan-500/30 transition-colors duration-300">
@@ -98,6 +99,7 @@ export default function MainLayout() {
                   transition={{ type: "spring", stiffness: 300, damping: 30 }}
                   className="absolute inset-0 overflow-y-auto overflow-x-hidden"
                 >
+                  {currentView === 'auth' && <AuthView />}
                   {currentView === 'onboarding' && <OnboardingView />}
                   {currentView === 'home' && <HomeView />}
                   {currentView === 'tools' && <ToolsView />}

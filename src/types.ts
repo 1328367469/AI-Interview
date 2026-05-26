@@ -1,4 +1,5 @@
 export type ViewState = 
+  | 'auth'
   | 'onboarding'
   | 'home' 
   | 'tools' 

@@ -4,18 +4,15 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAppContext } from '../context/AppContext';
 
 export default function JdMatchView() {
-  const { navigate, parsedResumeResult } = useAppContext();
-  const [analyzing, setAnalyzing] = useState(false);
-  const [resultReady, setResultReady] = useState(false);
+  const { navigate, parsedResumeResult, isAnalyzingJd, setIsAnalyzingJd, jdResultReady, setJdResultReady, jdJobs, setJdJobs } = useAppContext();
   const [region, setRegion] = useState("全国");
   const [jobType, setJobType] = useState("前端开发");
   const [showConfig, setShowConfig] = useState(false);
   const [showStrategy, setShowStrategy] = useState<number | null>(null);
-  const [jobs, setJobs] = useState<any[]>([]);
 
   // Mock Analysis
   const triggerAnalysis = async () => {
-    setAnalyzing(true);
+    setIsAnalyzingJd(true);
     try {
       const resumeText = parsedResumeResult?.documentLines?.map((l: any) => l.text).join('\n') || '';
       const response = await fetch('/api/search-jd', {
@@ -24,13 +21,13 @@ export default function JdMatchView() {
           body: JSON.stringify({ region, jobType, resumeText })
       });
       const data = await response.json();
-      setJobs(Array.isArray(data) ? data : []);
-      setResultReady(true);
+      setJdJobs(Array.isArray(data) ? data : []);
+      setJdResultReady(true);
     } catch (e) {
       console.error(e);
       alert("JD爬取/生成失败！");
     } finally {
-      setAnalyzing(false);
+      setIsAnalyzingJd(false);
     }
   };
 
@@ -108,7 +105,7 @@ export default function JdMatchView() {
                   />
                 </div>
                 <button 
-                  onClick={() => { setShowConfig(false); setResultReady(false); triggerAnalysis(); }}
+                  onClick={() => { setShowConfig(false); setJdResultReady(false); triggerAnalysis(); }}
                   className="w-full py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded shadow-[0_0_10px_rgba(6,182,212,0.3)] transition-colors"
                 >
                   更新爬取参数
@@ -119,7 +116,7 @@ export default function JdMatchView() {
         </AnimatePresence>
       </header>
 
-      {!resultReady ? (
+      {!jdResultReady ? (
         <div className="flex-1 flex flex-col items-center justify-center p-6 pb-20">
           <motion.button
              whileHover={{ scale: 1.05 }}
@@ -127,16 +124,16 @@ export default function JdMatchView() {
              onClick={triggerAnalysis}
              className="w-40 h-40 rounded-full border border-cyan-500/50 bg-cyan-950/20 shadow-[0_0_40px_rgba(6,182,212,0.15)] flex flex-col items-center justify-center gap-4 group relative"
           >
-            {analyzing && (
+            {isAnalyzingJd && (
               <motion.div 
                 animate={{ rotate: 360 }} 
                 transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
                 className="absolute inset-0 rounded-full border-t-2 border-r-2 border-cyan-400"
               />
             )}
-            <Zap size={40} className={analyzing ? "text-cyan-400 animate-pulse" : "text-slate-400 group-hover:text-cyan-400"} />
+            <Zap size={40} className={isAnalyzingJd ? "text-cyan-400 animate-pulse" : "text-slate-400 group-hover:text-cyan-400"} />
             <span className="text-sm font-mono font-bold text-slate-300 text-center leading-tight">
-              {analyzing ? (
+              {isAnalyzingJd ? (
                 <>CRAWLING<br/>(智能爬取中)...</>
               ) : (
                 <>START_FETCH<br/>(开始抓取)</>
@@ -154,7 +151,7 @@ export default function JdMatchView() {
           </div>
           
           <div className="space-y-4">
-            {jobs.map((job, idx) => (
+            {jdJobs.map((job, idx) => (
               <motion.div 
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}

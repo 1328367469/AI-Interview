@@ -5,11 +5,27 @@ import { useAppContext } from '../context/AppContext';
 import axios from 'axios';
 
 export default function ReportView() {
-  const { navigate, interviewResult, interviewSession } = useAppContext() as any;
+  const { navigate, interviewResult, interviewSession, generatedQuestions, setGeneratedQuestions, isGeneratingQuestions, setIsGeneratingQuestions, setQuestionsGenerationStep } = useAppContext() as any;
   const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingStep, setLoadingStep] = useState(0);
+
+  const steps = [
+    "📦 正在提取面试录音与文本记录...",
+    "🧠 AI 正在对齐知识点与您的实际回答...",
+    "🔍 正在分析知识盲区并提炼优化点...",
+    "📝 生成最终可视化面试报告..."
+  ];
 
   useEffect(() => {
+    let currentStep = 0;
+    const interval = setInterval(() => {
+       if (currentStep < 3) {
+          currentStep++;
+          setLoadingStep(currentStep);
+       }
+    }, 2500);
+
     async function fetchReport() {
       try {
         const res = await axios.post('/api/generate-report', {
@@ -21,18 +37,40 @@ export default function ReportView() {
       } catch (e) {
         console.error(e);
       } finally {
+        clearInterval(interval);
         setLoading(false);
       }
     }
     fetchReport();
-  }, [interviewResult]);
+    
+    return () => clearInterval(interval);
+  }, [interviewResult, interviewSession]);
 
   if (loading) {
     return (
-      <div className="flex h-full bg-slate-950 items-center justify-center flex-col gap-4">
-        <Loader className="animate-spin text-cyan-500" size={32} />
-        <div className="text-cyan-500 font-mono text-sm tracking-widest">
-          GENERATING DIAGNOSTICS...
+      <div className="flex h-full bg-slate-950 items-center justify-center flex-col gap-6 px-6">
+        <Loader className="animate-spin text-cyan-500" size={40} />
+        <div className="w-full max-w-sm">
+           <div className="flex justify-between text-xs font-mono text-cyan-500 mb-2 px-1">
+             <span>DIAGNOSTICS</span>
+             <span>{Math.min(100, (loadingStep + 1) * 25)}%</span>
+           </div>
+           <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+             <motion.div 
+               className="h-full bg-cyan-500"
+               initial={{ width: '0%' }}
+               animate={{ width: `${(loadingStep + 1) * 25}%` }}
+               transition={{ duration: 0.5 }}
+             />
+           </div>
+           <div className="mt-6 space-y-3">
+             {steps.map((text, i) => (
+                <div key={i} className={`text-sm flex items-center gap-3 transition-all duration-500 ${i === loadingStep ? 'text-white scale-105' : i < loadingStep ? 'text-cyan-500/50' : 'text-slate-700'}`}>
+                  {i < loadingStep ? <CheckCircle size={14} className="text-cyan-500" /> : <div className="w-3.5 h-3.5 rounded-full border border-current shrink-0"></div>}
+                  <span>{text}</span>
+                </div>
+             ))}
+           </div>
         </div>
       </div>
     );
@@ -242,7 +280,31 @@ export default function ReportView() {
           
           <button 
             className="mt-2 w-full py-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-colors font-bold uppercase tracking-widest text-[13px]"
-            onClick={() => navigate('question-bank')}
+            onClick={() => {
+              if (generatedQuestions.length === 0 && !isGeneratingQuestions) {
+                setIsGeneratingQuestions(true);
+                setQuestionsGenerationStep(0);
+                
+                // Do not wait, handle it asynchronously
+                fetch('/api/generate-training-questions', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ reportData: report })
+                })
+                .then(res => res.json())
+                .then(data => {
+                  if (data.categories) {
+                    setGeneratedQuestions(data.categories);
+                  }
+                  setIsGeneratingQuestions(false);
+                })
+                .catch(err => {
+                  console.error(err);
+                  setIsGeneratingQuestions(false);
+                });
+              }
+              navigate('question-bank');
+            }}
           >
             一键生成复习训练计划
           </button>

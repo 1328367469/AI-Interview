@@ -59,9 +59,9 @@ export default function ProfileView() {
         </div>
       </div>
 
-      <div className="px-6 mt-8 space-y-4 relative z-10">
+      <div className="px-6 mt-8 space-y-4 relative z-10 w-full">
         <h3 className="text-[10px] font-mono font-bold text-cyan-500 uppercase tracking-widest pl-1 mb-2">System Config / 系统配置</h3>
-         <div className="space-y-3">
+         <div className="space-y-3 pb-8">
            <ListRow icon={<RefreshCw className="text-slate-400" size={20} />} title="清除本地缓存" />
            <ListRow icon={<Settings className="text-slate-400" size={20} />} title="核心偏好设置" />
         </div>

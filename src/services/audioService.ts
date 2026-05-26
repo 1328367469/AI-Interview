@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 
-export function useSpeechRecognition({ onResult, onInterimResult, onSilence }: { onResult: (text: string) => void, onInterimResult?: (text: string) => void, onSilence: () => void }) {
+export function useSpeechRecognition({ onResult, onInterimResult, onSilence, silenceDuration = 5000 }: { onResult: (text: string) => void, onInterimResult?: (text: string) => void, onSilence: () => void, silenceDuration?: number }) {
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
   
@@ -114,7 +114,7 @@ export function useSpeechRecognition({ onResult, onInterimResult, onSilence }: {
        const timeSinceLastSpeech = Date.now() - lastSpeechTimeRef.current;
        
        // If quiet for 1.5s after having spoken something
-       if (timeSinceLastSpeech > 1500 && avg <= 15) {
+       if (timeSinceLastSpeech > silenceDuration && avg <= 15) {
           if (hasSpokenRef.current && !vadTriggeredRef.current) {
              vadTriggeredRef.current = true;
              callbacksRef.current.onSilence();
